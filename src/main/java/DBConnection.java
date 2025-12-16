@@ -1,0 +1,15 @@
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+
+public class DBConnection {
+
+    public Connection getConnection () {
+        try {
+            return DriverManager.getConnection(System.getenv("JDBC_URl"), System.getenv("USER"), System.getenv("PASSWORD"));
+        }
+        catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+}
