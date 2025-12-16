@@ -7,7 +7,7 @@ public class Dish {
     private DishTypeEnum dishType;
     private List<Ingredient> ingredients;
 
-    public Double getDishPrice() {
+    public Double getDishCost() {
         double totalPrice = 0;
         for (int i = 0; i < ingredients.size(); i++) {
             totalPrice = totalPrice + ingredients.get(i).getPrice();
