@@ -58,7 +58,16 @@ public class DataRetriever {
     }
 
     public Order saveOrder(Order orderToSave) throws SQLException {
-        // 1. Vérification des stocks (Logique inchangée)
+        // 1. VERROUILLAGE : Une commande DELIVERED ne peut plus être modifiée
+        if (orderToSave.getId() != null) {
+            // On récupère la version actuelle en base pour vérifier son statut
+            Order currentOrder = findOrderByReference(orderToSave.getReference());
+            if (currentOrder.getStatus() == OrderStatus.DELIVERED) {
+                throw new RuntimeException("Erreur : Une commande livrée ne peut plus être modifiée.");
+            }
+        }
+
+        // 2. VERIFICATION DES STOCKS (Ton code existant)
         if (orderToSave.getDishOrderList() != null) {
             for (DishOrder dishOrder : orderToSave.getDishOrderList()) {
                 for (DishIngredient recipeItem : dishOrder.getDish().getDishIngredients()) {
@@ -72,7 +81,7 @@ public class DataRetriever {
             }
         }
 
-        // 2. Requête SQL corrigée (Noms des colonnes cohérents dans le SET)
+        // 3. SAUVEGARDE SQL
         String upsertOrderSql = """
             insert into "order" (id, reference, creation_datetime, type, status)
             values (?, ?, ?, ?::ordertype, ?::orderstatus)
@@ -84,14 +93,8 @@ public class DataRetriever {
 
         try (Connection conn = new DBConnection().getConnection()) {
             conn.setAutoCommit(false);
-            // Important : On entoure "order" de guillemets aussi ici pour getNextSerialValue
             try (PreparedStatement ps = conn.prepareStatement(upsertOrderSql)) {
-                int currentId;
-                if (orderToSave.getId() != null) {
-                    currentId = orderToSave.getId();
-                } else {
-                    currentId = getNextSerialValue(conn, "\"order\"", "id");
-                }
+                int currentId = (orderToSave.getId() != null) ? orderToSave.getId() : getNextSerialValue(conn, "\"order\"", "id");
 
                 ps.setInt(1, currentId);
                 ps.setString(2, orderToSave.getReference());
@@ -104,17 +107,12 @@ public class DataRetriever {
                         orderToSave.setId(rs.getInt(1));
                     }
                 }
-
                 conn.commit();
                 return orderToSave;
             } catch (SQLException e) {
                 conn.rollback();
-                // On affiche le message réel de Postgres pour debug
-                System.err.println("Détail Postgres : " + e.getMessage());
-                throw new RuntimeException("Erreur SQL lors de la sauvegarde de la commande", e);
+                throw new RuntimeException("Erreur SQL lors de la sauvegarde : " + e.getMessage(), e);
             }
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
         }
     }
 
