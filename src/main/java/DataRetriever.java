@@ -11,7 +11,7 @@ public class DataRetriever {
         DBConnection dbConnection = new DBConnection();
         try (Connection connection = dbConnection.getConnection()) {
             PreparedStatement preparedStatement = connection.prepareStatement("""
-                    select id, reference, creation_datetime from "order" where reference like ?""");
+                    select id, reference, creation_datetime, ordertype, orderstatus from "order" where reference = ?""");
             preparedStatement.setString(1, reference);
             ResultSet resultSet = preparedStatement.executeQuery();
             if (resultSet.next()) {
@@ -20,6 +20,8 @@ public class DataRetriever {
                 order.setId(idOrder);
                 order.setReference(resultSet.getString("reference"));
                 order.setCreationDatetime(resultSet.getTimestamp("creation_datetime").toInstant());
+                order.setType(OrderType.valueOf(resultSet.getString("ordertype")));
+                order.setStatus(OrderStatus.valueOf(resultSet.getString("orderstatus")));
                 order.setDishOrderList(findDishOrderByIdOrder(idOrder));
                 return order;
             }
@@ -28,6 +30,7 @@ public class DataRetriever {
             throw new RuntimeException(e);
         }
     }
+
     private List<DishOrder> findDishOrderByIdOrder(Integer idOrder) {
         DBConnection dbConnection = new DBConnection();
         Connection connection = dbConnection.getConnection();
@@ -53,35 +56,66 @@ public class DataRetriever {
             throw new RuntimeException(e);
         }
     }
-    public Order saveOrder(Order orderToSave) {
-        // 1. On parcourt la liste des plats de la commande (dishOrderList est dans ta classe Order)
-        for (DishOrder dishOrder : orderToSave.getDishOrderList()) {
 
-            // 2. Pour chaque plat, on récupère ses ingrédients (via la classe DishIngredient)
-            // Note : Je suppose que ta classe Dish a une méthode getDishIngredients()
-            // ou que tu accèdes à la liste des ingrédients du plat.
-            for (DishIngredient recipeItem : dishOrder.getDish().getDishIngredients()) {
+    public Order saveOrder(Order orderToSave) throws SQLException {
+        // 1. Vérification des stocks (Logique inchangée)
+        if (orderToSave.getDishOrderList() != null) {
+            for (DishOrder dishOrder : orderToSave.getDishOrderList()) {
+                for (DishIngredient recipeItem : dishOrder.getDish().getDishIngredients()) {
+                    double totalNeeded = dishOrder.getQuantity() * recipeItem.getQuantity();
+                    StockValue currentStock = recipeItem.getIngredient().getStockValueAt(Instant.now());
 
-                // Calcul du besoin : (quantité du plat) * (quantité d'ingrédient pour 1 plat)
-                double totalNeeded = dishOrder.getQuantity() * recipeItem.getQuantity();
-
-                // 3. On utilise TA méthode getStockValueAt(Instant t) présente dans ta classe Ingredient
-                StockValue currentStock = recipeItem.getIngredient().getStockValueAt(Instant.now());
-
-                // 4. Vérification du stock
-                if (currentStock == null || currentStock.getQuantity() < totalNeeded) {
-                    // On lève l'exception avec le nom de l'ingrédient (attribut 'name' de ta classe Ingredient)
-                    throw new RuntimeException("Stock insuffisant pour l'ingrédient : " + recipeItem.getIngredient().getName());
+                    if (currentStock == null || currentStock.getQuantity() < totalNeeded) {
+                        throw new RuntimeException("Stock insuffisant pour l'ingrédient : " + recipeItem.getIngredient().getName());
+                    }
                 }
             }
         }
 
-        // 5. La Sauvegarde
-        // ATTENTION : Ici, pour que la commande soit "sauvegardée" en base de données,
-        // il faut une ligne de code qui communique avec SQL (JDBC ou JPA).
-        // Si tu n'as pas encore cette partie, l'objet reste juste en mémoire.
+        // 2. Requête SQL corrigée (Noms des colonnes cohérents dans le SET)
+        String upsertOrderSql = """
+            insert into "order" (id, reference, creation_datetime, type, status)
+            values (?, ?, ?, ?::ordertype, ?::orderstatus)
+            on conflict (id) do update
+            set status = excluded.status,
+                type = excluded.type
+            returning id
+            """;
 
-        return orderToSave;
+        try (Connection conn = new DBConnection().getConnection()) {
+            conn.setAutoCommit(false);
+            // Important : On entoure "order" de guillemets aussi ici pour getNextSerialValue
+            try (PreparedStatement ps = conn.prepareStatement(upsertOrderSql)) {
+                int currentId;
+                if (orderToSave.getId() != null) {
+                    currentId = orderToSave.getId();
+                } else {
+                    currentId = getNextSerialValue(conn, "\"order\"", "id");
+                }
+
+                ps.setInt(1, currentId);
+                ps.setString(2, orderToSave.getReference());
+                ps.setTimestamp(3, Timestamp.from(orderToSave.getCreationDatetime()));
+                ps.setString(4, orderToSave.getType().name());
+                ps.setString(5, orderToSave.getStatus().name());
+
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        orderToSave.setId(rs.getInt(1));
+                    }
+                }
+
+                conn.commit();
+                return orderToSave;
+            } catch (SQLException e) {
+                conn.rollback();
+                // On affiche le message réel de Postgres pour debug
+                System.err.println("Détail Postgres : " + e.getMessage());
+                throw new RuntimeException("Erreur SQL lors de la sauvegarde de la commande", e);
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     Dish findDishById(Integer id) {
@@ -443,7 +477,7 @@ public class DataRetriever {
 
     private void updateSequenceNextValue(Connection conn, String tableName, String columnName, String sequenceName) throws SQLException {
         String setValSql = String.format(
-                "SELECT setval('%s', (SELECT COALESCE(MAX(%s), 0) FROM %s))",
+                "SELECT setval('%s', (SELECT COALESCE(MAX(%s), 1) FROM %s))",
                 sequenceName, columnName, tableName
         );
 

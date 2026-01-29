@@ -77,3 +77,6 @@ create table if not exists dish_order
     id_dish  int references dish (id),
     quantity int
 );
+
+create type ordertype as enum ('EAT_IN', 'TAKE_AWAY');
+create type orderstatus as enum ('CREATED', 'READY', 'DELIVERED');
