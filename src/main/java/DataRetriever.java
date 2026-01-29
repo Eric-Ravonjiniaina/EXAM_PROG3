@@ -1,4 +1,5 @@
 import java.sql.*;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -27,7 +28,6 @@ public class DataRetriever {
             throw new RuntimeException(e);
         }
     }
-
     private List<DishOrder> findDishOrderByIdOrder(Integer idOrder) {
         DBConnection dbConnection = new DBConnection();
         Connection connection = dbConnection.getConnection();
@@ -52,6 +52,36 @@ public class DataRetriever {
         } catch (SQLException e) {
             throw new RuntimeException(e);
         }
+    }
+    public Order saveOrder(Order orderToSave) {
+        // 1. On parcourt la liste des plats de la commande (dishOrderList est dans ta classe Order)
+        for (DishOrder dishOrder : orderToSave.getDishOrderList()) {
+
+            // 2. Pour chaque plat, on récupère ses ingrédients (via la classe DishIngredient)
+            // Note : Je suppose que ta classe Dish a une méthode getDishIngredients()
+            // ou que tu accèdes à la liste des ingrédients du plat.
+            for (DishIngredient recipeItem : dishOrder.getDish().getDishIngredients()) {
+
+                // Calcul du besoin : (quantité du plat) * (quantité d'ingrédient pour 1 plat)
+                double totalNeeded = dishOrder.getQuantity() * recipeItem.getQuantity();
+
+                // 3. On utilise TA méthode getStockValueAt(Instant t) présente dans ta classe Ingredient
+                StockValue currentStock = recipeItem.getIngredient().getStockValueAt(Instant.now());
+
+                // 4. Vérification du stock
+                if (currentStock == null || currentStock.getQuantity() < totalNeeded) {
+                    // On lève l'exception avec le nom de l'ingrédient (attribut 'name' de ta classe Ingredient)
+                    throw new RuntimeException("Stock insuffisant pour l'ingrédient : " + recipeItem.getIngredient().getName());
+                }
+            }
+        }
+
+        // 5. La Sauvegarde
+        // ATTENTION : Ici, pour que la commande soit "sauvegardée" en base de données,
+        // il faut une ligne de code qui communique avec SQL (JDBC ou JPA).
+        // Si tu n'as pas encore cette partie, l'objet reste juste en mémoire.
+
+        return orderToSave;
     }
 
     Dish findDishById(Integer id) {
